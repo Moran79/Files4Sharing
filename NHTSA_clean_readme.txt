@@ -1,0 +1,3 @@
+# To use it in R, you can copy can paste the code below
+
+vartype_NHTSA <- rep("numeric", 114)vartype_NHTSA[c(1, 2, 3, 4, 5, 7, 10, 24, 25, 26, 27, 28, 32,                 33, 35, 37, 44, 45, 68, 69, 70, 71, 72, 73, 74, 75,                 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88,                 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100,                 101, 102)] <- "factor"dat <- read.csv("NHTSA_clean.csv", colClasses = vartype_NHTSA)
