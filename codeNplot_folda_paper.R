@@ -280,7 +280,13 @@ dat <- cbind(dat, model.matrix(~.-1, data = dat))
 (fitPillai <- folda(datX = dat[,-1], response = dat[,1], testStat = "Pillai", alpha = 0.05))
 
 # Scenario 2
-dat <- read.csv("NHTSA_clean.csv")
+vartype_NHTSA <- rep("numeric", 114)
+vartype_NHTSA[c(1, 2, 3, 4, 5, 7, 10, 24, 25, 26, 27, 28, 32,
+                33, 35, 37, 44, 45, 68, 69, 70, 71, 72, 73, 74, 75,
+                76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88,
+                89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100,
+                101, 102)] <- "factor"
+dat <- read.csv("NHTSA_clean.csv", colClasses = vartype_NHTSA)
 (fitWilks <- folda(datX = dat[,-1], response = dat[,1], testStat = "Wilks", alpha = 0.05))
 (fitPillai <- folda(datX = dat[,-1], response = dat[,1], testStat = "Pillai", alpha = 0.05))
 
@@ -338,41 +344,41 @@ folda <- function(datX,
                   downSampling = FALSE,
                   kSample = NULL,
                   algorithm = "Original"){
-  
+
   # Pre-processing: Arguments ----------------------------------
-  
+
   if (!is.data.frame(datX)) stop("datX must be a data.frame")
   response <- droplevels(as.factor(response))
   subsetMethod <- match.arg(subsetMethod, c("forward", "all"))
-  
+
   # Pre-processing: Data Cleaning -----------------------------------------------
-  
+
   idxTrain <- folda:::getDownSampleInd(response = response,
                                        downSampling = downSampling,
                                        kSample = kSample)
   response <- droplevels(response[idxTrain])
   priorAndMisClassCost <- folda:::checkPriorAndMisClassCost(prior = prior, misClassCost = misClassCost, response = response)
-  
+
   imputedSummary <- missingFix(data = datX[idxTrain, , drop = FALSE], missingMethod = missingMethod)
   datX <- imputedSummary$data # this step also removes some constant columns
   if(any(dim(datX) == 0)) stop("No available observations or features, which maybe due to preprocessing steps.")
-  
+
   # Pre-processing: Data Transformation -----------------------------------------------
-  
+
   modelFrame <- stats::model.frame(formula = ~.-1, datX, na.action = "na.fail")
   Terms <- stats::terms(modelFrame)
   m <- scale(stats::model.matrix(Terms, modelFrame)) # constant cols would be changed to NaN in this step
   currentVarList <- seq_len(ncol(m))
-  
+
   # Forward Selection -----------------------------------------------
-  
+
   if(subsetMethod == "forward"){
     forwardRes <- folda:::forwardSel(m = m,
                                      response = response,
                                      testStat = testStat,
                                      alpha = alpha,
                                      correction = correction)
-    
+
     # When no variable is selected, use the full model
     if(length(forwardRes$currentVarList) != 0){
       # modify the design matrix to make it more compact
@@ -383,13 +389,13 @@ folda <- function(datX,
       currentVarList <- which(colnames(m) %in% forwardRes$forwardInfo$var)
     }
   }
-  
+
   varSD <- attr(m,"scaled:scale")[currentVarList]
   varCenter <- attr(m,"scaled:center")[currentVarList]
   m <- m[, currentVarList, drop = FALSE]
-  
+
   # ULDA -----------------------------------------------
-  
+
   # Step 1: SVD on the combined matrix H
   groupMeans <- tapply(c(m), list(rep(response, dim(m)[2]), col(m)), function(x) mean(x, na.rm = TRUE))
   Hb <- sqrt(tabulate(response)) * groupMeans
@@ -404,13 +410,13 @@ folda <- function(datX,
       fitSVD <- folda:::svdEigen(rbind(Hb, cho$Lt))
     }
   } else fitSVD <- folda:::svdEigen(rbind(Hb, Hw))
-  
+
   # Step 2: SVD on the P matrix
   N <- nrow(m); J <- nlevels(response)
   rankT <- sum(fitSVD$d >= max(dim(fitSVD$u), dim(fitSVD$v)) * .Machine$double.eps * fitSVD$d[1])
   fitSVDp <- folda:::svdEigen(fitSVD$u[seq_len(J), seq_len(rankT), drop = FALSE], uFlag = FALSE)
   rankAll <- min(J - 1, sum(fitSVDp$d >= max(J, rankT) * .Machine$double.eps * fitSVDp$d[1]))
-  
+
   # Step 3: Transform Sw into identity matrix
   unitSD <- diag(sqrt((N - J) / abs(1 - fitSVDp$d^2 + 1e-5)), nrow = rankAll) # Scale to unit var
   scalingFinal <- (fitSVD$v[, seq_len(rankT), drop = FALSE] %*% diag(1 / fitSVD$d[seq_len(rankT)], nrow = rankT) %*% fitSVDp$v[, seq_len(rankAll), drop = FALSE]) %*% unitSD
@@ -418,23 +424,23 @@ folda <- function(datX,
   groupMeans <- groupMeans %*% scalingFinal
   rownames(groupMeans) <- levels(response)
   colnames(groupMeans) <- colnames(scalingFinal) <- paste("LD", seq_len(ncol(groupMeans)), sep = "")
-  
+
   # Summary and outputs -----------------------------------------------
-  
+
   statPillai <- sum(fitSVDp$d[seq_len(rankAll)]^2)
   p <- rankT; s <- rankAll; numF <- N - J - p + s; denF <- abs(p - J + 1) + s
   pValue <- ifelse(numF > 0, stats::pbeta(1 - statPillai / s, shape1 = numF * s / 2, shape2 = denF * s / 2), 0)
-  
+
   res <- list(scaling = scalingFinal, groupMeans = groupMeans, prior = priorAndMisClassCost$prior,
               misClassCost = priorAndMisClassCost$misClassCost, misReference = imputedSummary$ref,
               terms = Terms, xlevels = stats::.getXlevels(Terms, modelFrame), varIdx = currentVarList,
               varSD = varSD, varCenter = varCenter, statPillai = statPillai, pValue = pValue)
-  
+
   if(subsetMethod == "forward"){
     res$forwardInfo = forwardRes$forwardInfo
     res$stopInfo <- forwardRes$stopInfo
   }
-  
+
   class(res) <- "ULDA"
   pred <- factor(stats::predict(res, datX), levels = levels(response))
   res$predGini <- 1 - sum(unname(table(pred) / dim(datX)[1])^2)
